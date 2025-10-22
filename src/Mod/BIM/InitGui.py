@@ -575,7 +575,6 @@ class BIMWorkbench(Workbench):
         if not hasattr(Gui, "BIM_WBManipulator"):
             Gui.BIM_WBManipulator = BIM_WBManipulator()
         Gui.addWorkbenchManipulator(Gui.BIM_WBManipulator)
-        Gui.activeWorkbench().reloadActive()
 
         Log("BIM workbench activated\n")
 

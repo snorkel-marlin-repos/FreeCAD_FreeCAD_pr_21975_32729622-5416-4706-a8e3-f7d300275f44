@@ -52,13 +52,6 @@ class GuiExport Translator : public QObject
     Q_OBJECT
 
 public:
-    class ParameterObserver;
-    static constexpr std::initializer_list<const char*> formattingOptions{
-        QT_TR_NOOP("Operating system"),
-        QT_TR_NOOP("Selected language"),
-        QT_TR_NOOP("C/POSIX")
-    };
-
     /** @name singleton stuff */
     //@{
     /// Creates an instance
@@ -99,7 +92,6 @@ private:
     void updateLocaleChange() const;
 
 private:
-    std::unique_ptr<ParameterObserver> observer;
     static Translator* _pcSingleton;
     TranslatorP* d;
     std::unique_ptr<Translator, std::function<void(Translator*)>> decimalPointConverter;
