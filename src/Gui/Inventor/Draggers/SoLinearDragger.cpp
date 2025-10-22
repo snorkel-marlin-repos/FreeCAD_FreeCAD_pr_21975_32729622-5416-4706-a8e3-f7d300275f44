@@ -24,11 +24,9 @@
 #ifndef _PreComp_
 #include <cassert>
 #include <numbers>
-#include <algorithm>
 
 #include <Inventor/SbRotation.h>
 #include <Inventor/actions/SoGLRenderAction.h>
-#include <Inventor/engines/SoCalculator.h>
 #include <Inventor/engines/SoComposeVec3f.h>
 #include <Inventor/nodes/SoLightModel.h>
 #include <Inventor/nodes/SoDrawStyle.h>
@@ -50,7 +48,6 @@
 #include <Inventor/nodes/SoText2.h>
 #include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/nodes/SoFontStyle.h>
-#include <Inventor/draggers/SoDragger.h>
 #endif
 
 #include <Base/Quantity.h>
@@ -58,7 +55,7 @@
 #include "SoLinearDragger.h"
 
 #include "MainWindow.h"
-#include "Utilities.h"
+#include "SoFCDB.h"
 
 #include <SoTextLabel.h>
 
@@ -79,35 +76,39 @@ SoLinearDragger::SoLinearDragger()
     this->ref();
 #endif
 
-    FC_ADD_CATALOG_ENTRY(translator, SoSeparator, geomSeparator);
-    FC_ADD_CATALOG_ENTRY(activeSwitch, SoSwitch, translator);
-    FC_ADD_CATALOG_ENTRY(secondaryColor, SoBaseColor, activeSwitch);
-    FC_ADD_CATALOG_ENTRY(coneSeparator, SoSeparator, translator);
-    FC_ADD_CATALOG_ENTRY(cylinderSeparator, SoSeparator, translator);
-    // For some reason changing the whichChild parameter of this switch doesn't hide the label
-    FC_ADD_CATALOG_ENTRY(labelSwitch, SoSwitch, translator);
-    FC_ADD_CATALOG_ENTRY(labelSeparator, SoSeparator, labelSwitch);
+    SO_KIT_ADD_CATALOG_ENTRY(translator, SoSeparator, TRUE, geomSeparator, "", TRUE);
+    SO_KIT_ADD_CATALOG_ENTRY(activeSwitch, SoSwitch, TRUE, translator, "", TRUE);
+    SO_KIT_ADD_CATALOG_ENTRY(activeColor, SoBaseColor, TRUE, activeSwitch, "", TRUE);
+    SO_KIT_ADD_CATALOG_ENTRY(coneSeparator, SoSeparator, TRUE, translator, "", TRUE);
+    SO_KIT_ADD_CATALOG_ENTRY(cylinderSeparator, SoSeparator, TRUE, translator, "", TRUE);
+    SO_KIT_ADD_CATALOG_ENTRY(labelSeparator, SoSeparator, TRUE, translator, "", TRUE);
 
+    if (SO_KIT_IS_FIRST_INSTANCE()) {
+        buildFirstInstance();
+    }
+
+    SO_KIT_ADD_CATALOG_ENTRY(translator, SoSeparator, TRUE, geomSeparator, "", TRUE);
+
+    SO_KIT_ADD_FIELD(label, (""));
     SO_KIT_ADD_FIELD(translation, (0.0, 0.0, 0.0));
     SO_KIT_ADD_FIELD(translationIncrement, (1.0));
     SO_KIT_ADD_FIELD(translationIncrementCount, (0));
     SO_KIT_ADD_FIELD(autoScaleResult, (1.0));
-    SO_KIT_ADD_FIELD(coneBottomRadius, (0.8));
-    SO_KIT_ADD_FIELD(coneHeight, (2.5));
-    SO_KIT_ADD_FIELD(cylinderHeight, (10.0));
-    SO_KIT_ADD_FIELD(cylinderRadius, (0.1));
-    SO_KIT_ADD_FIELD(activeColor, (1, 1, 0));
 
     SO_KIT_INIT_INSTANCE();
 
-    setupGeometryCalculator();
-    SoInteractionKit::setPart("cylinderSeparator", buildCylinderGeometry());
-    SoInteractionKit::setPart("coneSeparator", buildConeGeometry());
-    SoInteractionKit::setPart("labelSeparator", buildLabelGeometry());
-    SoInteractionKit::setPart("secondaryColor", buildActiveColor());
+    // initialize default parts.
+    // first is from 'SO_KIT_CATALOG_ENTRY_HEADER' macro
+    // second is unique name from buildFirstInstance().
+    SoInteractionKit::setPartAsDefault("coneSeparator", "CSysDynamics_TDragger_Cone");
+    SoInteractionKit::setPartAsDefault("cylinderSeparator", "CSysDynamics_TDragger_Cylinder");
+    SoInteractionKit::setPartAsDefault("activeColor", "CSysDynamics_TDragger_ActiveColor");
 
-    FC_SET_SWITCH("activeSwitch", SO_SWITCH_NONE);
-    setLabelVisibility(true);
+    SoInteractionKit::setPart("labelSeparator", buildLabelGeometry());
+
+    auto sw = SO_GET_ANY_PART(this, "activeSwitch", SoSwitch);
+    SoInteractionKit::setSwitchValue(sw, SO_SWITCH_NONE);
+
 
     this->addStartCallback(&SoLinearDragger::startCB);
     this->addMotionCallback(&SoLinearDragger::motionCB);
@@ -133,7 +134,22 @@ SoLinearDragger::~SoLinearDragger()
     removeValueChangedCallback(&SoLinearDragger::valueChangedCB);
 }
 
-SoSeparator* SoLinearDragger::buildCylinderGeometry()
+void SoLinearDragger::buildFirstInstance()
+{
+    auto cylinderSeparator = buildCylinderGeometry();
+    auto coneSeparator = buildConeGeometry();
+    auto activeColor = buildActiveColor();
+
+    cylinderSeparator->setName("CSysDynamics_TDragger_Cylinder");
+    coneSeparator->setName("CSysDynamics_TDragger_Cone");
+    activeColor->setName("CSysDynamics_TDragger_ActiveColor");
+
+    SoFCDB::getStorage()->addChild(cylinderSeparator);
+    SoFCDB::getStorage()->addChild(coneSeparator);
+    SoFCDB::getStorage()->addChild(activeColor);
+}
+
+SoSeparator* SoLinearDragger::buildCylinderGeometry() const
 {
     auto cylinderSeparator = new SoSeparator();
 
@@ -142,22 +158,18 @@ SoSeparator* SoLinearDragger::buildCylinderGeometry()
     cylinderSeparator->addChild(cylinderLightModel);
 
     auto cylinderTranslation = new SoTranslation();
+    cylinderTranslation->translation.setValue(0.0, cylinderHeight / 2.0, 0.0);
     cylinderSeparator->addChild(cylinderTranslation);
-    cylinderTranslation->translation.connectFrom(&calculator->oA);
 
     auto cylinder = new SoCylinder();
-    cylinder->radius.setValue(cylinderRadius.getValue());
-    cylinder->height.setValue(cylinderHeight.getValue());
+    cylinder->radius.setValue(cylinderRadius);
+    cylinder->height.setValue(cylinderHeight);
     cylinderSeparator->addChild(cylinder);
-
-    cylinder->radius.connectFrom(&cylinderRadius);
-    cylinder->height.connectFrom(&cylinderHeight);
-    calculator->a.connectFrom(&cylinder->height);
 
     return cylinderSeparator;
 }
 
-SoSeparator* SoLinearDragger::buildConeGeometry()
+SoSeparator* SoLinearDragger::buildConeGeometry() const
 {
     auto coneLightModel = new SoLightModel();
     coneLightModel->model = SoLightModel::BASE_COLOR;
@@ -171,28 +183,24 @@ SoSeparator* SoLinearDragger::buildConeGeometry()
     coneSeparator->addChild(pickStyle);
 
     auto coneTranslation = new SoTranslation();
+    coneTranslation->translation.setValue(0.0, cylinderHeight + coneHeight / 2.0, 0.0);
     coneSeparator->addChild(coneTranslation);
-    coneTranslation->translation.connectFrom(&calculator->oB);
 
     auto cone = new SoCone();
-    cone->bottomRadius.setValue(coneBottomRadius.getValue());
-    cone->height.setValue(coneHeight.getValue());
+    cone->bottomRadius.setValue(coneBottomRadius);
+    cone->height.setValue(coneHeight);
     coneSeparator->addChild(cone);
-
-    cone->bottomRadius.connectFrom(&coneBottomRadius);
-    cone->height.connectFrom(&coneHeight);
-    calculator->b.connectFrom(&cone->height);
 
     return coneSeparator;
 }
 
 SoSeparator* SoLinearDragger::buildLabelGeometry()
 {
-    auto labelSeparator = new SoSeparator;
+    auto labelSeparator = new SoSeparator();
 
     auto labelTranslation = new SoTranslation();
+    labelTranslation->translation.setValue(0.0, cylinderHeight + coneHeight * 1.5, 0.0);
     labelSeparator->addChild(labelTranslation);
-    labelTranslation->translation.connectFrom(&calculator->oC);
 
     auto label = new SoFrameLabel();
     label->string.connectFrom(&this->label);
@@ -208,25 +216,10 @@ SoSeparator* SoLinearDragger::buildLabelGeometry()
 
 SoBaseColor* SoLinearDragger::buildActiveColor()
 {
-    auto color = new SoBaseColor;
-    color->rgb.connectFrom(&activeColor);
+    auto colorActive = new SoBaseColor();
+    colorActive->rgb.setValue(1.0, 1.0, 0.0);
 
-    return color;
-}
-
-void SoLinearDragger::setupGeometryCalculator()
-{
-    calculator = new SoCalculator;
-    // Recalculate the corresponding variables in the left hand side whenever any of the variables in the right hand side change
-    // oA -> cylinderTranslation
-    // oB -> coneTranslation
-    // oC -> labelTranslation
-    // a  -> cylinderHeight
-    // b  -> coneHeight
-    calculator->expression =
-        "oA = vec3f(0, a * 0.5, 0); "
-        "oB = vec3f(0, a + b * 0.5, 0); "
-        "oC = vec3f(0, a + b * 1.5, 0); ";
+    return colorActive;
 }
 
 void SoLinearDragger::startCB(void*, SoDragger* d)
@@ -268,7 +261,11 @@ void SoLinearDragger::valueChangedCB(void*, SoDragger* d)
     auto sudoThis = dynamic_cast<SoLinearDragger*>(d);
     assert(sudoThis);
     SbMatrix matrix = sudoThis->getMotionMatrix();  // clazy:exclude=rule-of-two-soft
-    SbVec3f trans = getMatrixTransform(matrix).translation;
+
+    // all this just to get the translation?
+    SbVec3f trans, scaleDummy;
+    SbRotation rotationDummy, scaleOrientationDummy;
+    matrix.getTransform(trans, rotationDummy, scaleDummy, scaleOrientationDummy);
 
     sudoThis->fieldSensor.detach();
     if (sudoThis->translation.getValue() != trans) {
@@ -279,7 +276,9 @@ void SoLinearDragger::valueChangedCB(void*, SoDragger* d)
 
 void SoLinearDragger::dragStart()
 {
-    FC_SET_SWITCH("activeSwitch", SO_SWITCH_ALL);
+    SoSwitch* sw;
+    sw = SO_GET_ANY_PART(this, "activeSwitch", SoSwitch);
+    SoInteractionKit::setSwitchValue(sw, SO_SWITCH_ALL);
 
     // do an initial projection to eliminate discrepancies
     // in arrow head pick. we define the arrow in the y+ direction
@@ -337,7 +336,9 @@ void SoLinearDragger::drag()
 
 void SoLinearDragger::dragFinish()
 {
-    FC_SET_SWITCH("activeSwitch", SO_SWITCH_NONE);
+    SoSwitch* sw;
+    sw = SO_GET_ANY_PART(this, "activeSwitch", SoSwitch);
+    SoInteractionKit::setSwitchValue(sw, SO_SWITCH_NONE);
 }
 
 SbBool SoLinearDragger::setUpConnections(SbBool onoff, SbBool doitalways)
@@ -389,88 +390,4 @@ SbVec3f SoLinearDragger::roundTranslation(const SbVec3f& vecIn, float incrementI
     out[2] = 0.0;
 
     return out;
-}
-
-void SoLinearDragger::setLabelVisibility(bool visible) {
-    FC_SET_SWITCH("labelSwitch", visible? SO_SWITCH_ALL : SO_SWITCH_NONE);
-}
-
-bool SoLinearDragger::isLabelVisible() {
-    auto* sw = SO_GET_ANY_PART(this, "labelSwitch", SoSwitch);
-    return sw->whichChild.getValue() == SO_SWITCH_ALL;
-}
-
-SO_KIT_SOURCE(SoLinearDraggerContainer)
-
-void SoLinearDraggerContainer::initClass()
-{
-    SoLinearDragger::initClass();
-    SO_KIT_INIT_CLASS(SoLinearDraggerContainer, SoInteractionKit, "InteractionKit");
-}
-
-SoLinearDraggerContainer::SoLinearDraggerContainer()
-{
-    SO_KIT_CONSTRUCTOR(SoLinearDraggerContainer);
-
-#if defined(Q_OS_MACOS) || defined(Q_OS_FREEBSD) || defined(Q_OS_OPENBSD)
-    this->ref();
-#endif
-
-    FC_ADD_CATALOG_ENTRY(draggerSwitch, SoSwitch, geomSeparator);
-    FC_ADD_CATALOG_ENTRY(baseColor, SoBaseColor, draggerSwitch);
-    FC_ADD_CATALOG_ENTRY(transform, SoTransform, draggerSwitch);
-    FC_ADD_CATALOG_ENTRY(dragger, SoLinearDragger, draggerSwitch);
-
-    SO_KIT_ADD_FIELD(rotation, (0, 0, 0, 0));
-    SO_KIT_ADD_FIELD(color, (0, 0, 0));
-    SO_KIT_ADD_FIELD(translation, (0, 0, 0));
-
-    SO_KIT_INIT_INSTANCE();
-
-    SoInteractionKit::setPart("baseColor", buildColor());
-    SoInteractionKit::setPart("transform", buildTransform());
-
-    setVisibility(true);
-}
-
-SoBaseColor* SoLinearDraggerContainer::buildColor()
-{
-    auto color = new SoBaseColor;
-    color->rgb.connectFrom(&this->color);
-
-    return color;
-}
-
-SoTransform* SoLinearDraggerContainer::buildTransform() {
-    auto transform = new SoTransform;
-    transform->translation.connectFrom(&this->translation);
-    transform->rotation.connectFrom(&this->rotation);
-
-    return transform;
-}
-
-void SoLinearDraggerContainer::setVisibility(bool visible)
-{
-    FC_SET_SWITCH("draggerSwitch", visible? SO_SWITCH_ALL : SO_SWITCH_NONE);
-}
-
-bool SoLinearDraggerContainer::isVisible() {
-    auto* sw = SO_GET_ANY_PART(this, "draggerSwitch", SoSwitch);
-    return sw->whichChild.getValue() == SO_SWITCH_ALL;
-}
-
-SoLinearDragger* SoLinearDraggerContainer::getDragger()
-{
-    return SO_GET_PART(this, "dragger", SoLinearDragger);
-}
-
-void Gui::SoLinearDraggerContainer::setPointerDirection(const Base::Vector3d& dir)
-{
-    // This is the direction along which the SoLinearDragger points in it local space
-    Base::Vector3d draggerDir{0, 1, 0};
-    Base::Vector3d axis = draggerDir.Cross(dir).Normalize();
-    double ang = draggerDir.GetAngleOriented(dir, axis);
-
-    SbRotation rot{Base::convertTo<SbVec3f>(axis), static_cast<float>(ang)};
-    rotation.setValue(rot);
 }
